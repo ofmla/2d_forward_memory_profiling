@@ -12,7 +12,7 @@ import h5py
 import gc
 
 from dask_jobqueue import SLURMCluster
-import multiprocessing.popen_spawn_posix
+# import multiprocessing.popen_spawn_posix
 from dask.distributed import Client, LocalCluster
 
 from devito import *
@@ -26,7 +26,7 @@ from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 from pyrevolve import Revolver
 
-from utils import segy_write, make_lookup_table, create_shot_dict
+from utils import segy_write, make_lookup_table
 from utils import limit_model_to_receiver_area, extend_image, check_par_attr
 from ctypes import c_float
 
@@ -467,7 +467,8 @@ class DaskCluster:
             rev_op(u0=u0, du=du, vp=model.vp, dt=model.critical_dt, rec=residual)
 
         eq = Eq(src_illum, grad_sgle/(src_illum+eps))
-        op = Operator(eq)()
+        op = Operator(eq)
+        op.apply()
         grad = extend_image(origin, vp_updt, model, src_illum)
 
         del u0
@@ -609,7 +610,8 @@ class DaskCluster:
             op_imaging(u0=u0, du=du, vp=model.vp, dt=model.critical_dt, rec=residual)
 
         eq = Eq(src_illum, grad_sgle/(src_illum+eps))
-        op = Operator(eq)()
+        op = Operator(eq)
+        op.apply()
         grad = extend_image(origin, vp, model, src_illum)
 
         del u0
