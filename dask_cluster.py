@@ -3,7 +3,6 @@
 
 # basic imports.
 import os
-import sys
 import segyio
 import numpy as np
 import time
@@ -11,20 +10,14 @@ import yaml
 import json
 import h5py
 import gc
-from timeit import default_timer as timer
 
 from dask_jobqueue import SLURMCluster
 import multiprocessing.popen_spawn_posix
-from dask.distributed import Client, LocalCluster, wait
-from dask.distributed import performance_report
-from dask.distributed import as_completed, get_worker, progress
-from distributed.worker import logger
-from joblib import Parallel, delayed
+from dask.distributed import Client, LocalCluster
 
 from devito import *
 from examples.checkpointing import DevitoCheckpoint, CheckpointOperator
-from examples.seismic import SeismicModel, AcquisitionGeometry, TimeAxis
-from examples.seismic import Receiver, PointSource
+from examples.seismic import AcquisitionGeometry, TimeAxis, Receiver
 from examples.seismic.tti import AnisotropicWaveSolver
 from examples.seismic.tti.operators import kernel_centered_2d
 from examples.seismic.acoustic import AcousticWaveSolver
@@ -103,12 +96,12 @@ class DaskCluster:
             if file_src is not None and file_rec is not None:
                 with h5py.File(file_src, 'r') as f:
                     a_group_key = list(f.keys())[0]
-                    src_coordinates = f[a_group_key][()]
-                nshots = src_coordinates.shape[0]
+                    src_coord = f[a_group_key][()]
+                nshots = src_coord.shape[0]
 
                 with h5py.File(file_rec, 'r') as f:
                     a_group_key = list(f.keys())[0]
-                    rec_coordinates = f[a_group_key][()]
+                    rec_coord = f[a_group_key][()]
             else:
                 nshots = self.config_values['nshots']
                 nrecs = self.config_values['nrecs']
@@ -310,7 +303,7 @@ class DaskCluster:
         if rec_coord.shape[0] < 2*nbl:
             s = 'Shot {0:d} located too closely to the origin, therefore,'\
                 'it is not modeled'
-            print('s'.format(shot_dict['id']))
+            print(s.format(shot_dict['id']))
             return True
 
         # Geometry for current shot
@@ -424,7 +417,7 @@ class DaskCluster:
             rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
 
         # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, 0, tn,
+        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
                                        f0=f0, src_type='Ricker')
 
         # Set up solver.
@@ -563,7 +556,7 @@ class DaskCluster:
             rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
 
         # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, 0, tn,
+        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
                                        f0=f0, src_type='Ricker')
 
         # Set up solver.
@@ -688,7 +681,7 @@ class DaskCluster:
             rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
 
         # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, 0, tn,
+        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
                                        f0=f0, src_type='Ricker')
 
         # Set up solver.
@@ -835,4 +828,3 @@ class DaskCluster:
 
             return Operator(eqn + res_term + [image_update] +
                             [src_illum_updt], subs=model.spacing_map)
-
