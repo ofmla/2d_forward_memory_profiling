@@ -55,7 +55,7 @@ def segy_write(data, sourceX, sourceZ, groupX, groupZ, dt, filename, sourceY=Non
 
     nt = data.shape[0]
     nxrec = len(groupX)
-    print(nt,nxrec)
+
     if sourceY is None and groupY is None:
         sourceY = np.zeros(1, dtype='int')
         groupY = np.zeros(nxrec, dtype='int')
@@ -71,7 +71,7 @@ def segy_write(data, sourceX, sourceZ, groupX, groupZ, dt, filename, sourceY=Non
         for i in range(nxrec):
             segyfile.bin = {
                 so.BinField.Samples: data.shape[0],
-                so.BinField.Traces:  data.shape[1],
+                so.BinField.Traces: data.shape[1],
                 so.BinField.Interval: int(dt*1e3)
             }
             segyfile.header[i] = {
@@ -385,4 +385,3 @@ def check_par_attr(someobject, filepath, setup_func, shape, lsrtm=False):
                 par[:] = f[file][()]
 
         someobject.params[-1] *= (np.pi/180.)  # use radians
-
