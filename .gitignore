@@ -1,0 +1,11 @@
+# Ignore output files
+.h5
+.dat
+.file
+
+# Ignore segy files
+*.segy
+
+# Ignore directories created
+__pycache__
+dask-worker-space/
