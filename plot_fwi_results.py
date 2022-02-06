@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
 import matplotlib.ticker as plticker
 import matplotlib as mpl
@@ -64,4 +63,3 @@ if __name__ == '__main__':
         ax.label_outer()
 
     fig.savefig('fwi_marmosui2.pdf', bbox_inches="tight")
-

@@ -113,5 +113,3 @@ class ControlInversion:
         with h5py.File(s+'.h5', 'w') as f:
             f.create_dataset('vp', data=X.reshape(-1, shape[1]).astype('float32'))
             f.create_dataset('metadata', data=json.dumps(metadata))
-
-
