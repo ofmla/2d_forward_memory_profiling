@@ -61,3 +61,47 @@ Finally, after the configuration is completed, execute the command:
 python forward_script.py
 ```
 Then, check the `shotfile_path` folder to see the generated segy files.
+
+## FWI
+
+The first thing we want to say is that we perform the inversion test on inverse-crime data, i.e. we use the same numerical
+method for both generating the synthetic data and performing the inversion. However, once the inversion implementationn facilitates segy files reading, the inverse crime problem can be overcome. Just as in the previous case, it is also necessary to define some parameters in the YAML file (`config.yaml`). Clearly, the first step is to set the `forward` variable to false. Because the inversion code was designed to allow you to run either LSRTM or FWI you need to specific which will be run. For FWI, set `fwi` to `true`, otherwise (i.e. LSRTM), set it to `false`. Define bounding box constraints on the solution `vmin` and `vmax`, and choose one of the available gradient-based methods in `sotb-wrapper` library. You also need to inform the depth (number of layers) which the gradient must not be updated `mute_depth`. An example of the inversion parameter settings for the FWI experiment using the Marmousi II synthetic data is given below. Here we use the Limited Broyden-Fletcher-Goldfarb-Shanno method `opt_method: 'LBFGS'`
+``` yaml 
+forward: false
+fwi: true
+vmin: 1.377
+vmax: 4.688
+opt_meth: 'LBFGS'
+mute_depth: 12
+```
+We maintain the cluster setup and modeling parameters. In the first case all is reused, while in the second one, a large part of the informations is used. You can also use checkpointing tecnhique to keep memory requirements as low as possible. In this case, simply enter the required values in each key in the dictionary `ckp_params`. To perform the experiment with or without the checkpointing technique, specify a boolean value (true/false) in the first key `checkpointing`, in according with the case. You can enter the percentage of total number of time steps to be checkpoints `pct_ckp`. If you choose a `null` value for this key, the number of checkpoints is set to be 1% (0.01) of the total number of time steps. In the case of a multilevel checkpointing strategy, you have to decide how best to divide the number of checkpoints between disk and RAM memory. Althought `pyrevolve` supports checkpointing with multiple levels of storage, we assume that only these two levels are available. Then, the percentage of checkpoints to be saved in memory `pct_mckp` has to be set. In this case, it is a percentage of the number of checkpoints defined by `pct_ckp`. Additionally you must set two lists  with the writing cost and the
+reading cost of both levels of storage (`costs_mem` and `costs_disk`). With regard to the checkpoints who will be saved in memory, you have the option to save them on a single file or multiple files. To do this, set the key `singlefile` to `true` or `false`, respectively. To run the FWI experiment with the synthetic data from the Marmousi II model, on latop referred above (which has 16GB of RAM), we used the following configuration. Since we do not have memory restrictions, we set `checkpointing: false`. By doing this, all other key values become irrelevant. 
+``` yaml 
+# checkpointing parameters
+ckp_params:
+  checkpointing: false
+  ckptype: "MULTILEVEL_CKP"
+  pct_ckp: null
+  pct_mckp: 0.05
+  singlefile: False
+  costs_mem: [5, 4]
+  costs_disk: [100, 50]
+```
+If we wanted to run again the experiment, but using checkpointing, we simply had to set `checkpointing: true` and `pct_ckp: null`, because we are dealing with a 2D case, which does not merit a multilevel approach. Again, further key values become irrelevant as they are needed only for the multilevel case (i.e. `ckptype: "MULTILEVEL_CKP"`).
+
+To run the FWI test, execute the command:
+```
+python inversion_script.py
+```
+After finishing the inversion process, you can generate the figures running the plot_fwi_results file.
+```
+python plot_fwi_results.py
+```
+
+
+
+
+
+
+
+
