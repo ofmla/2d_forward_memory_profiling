@@ -65,7 +65,7 @@ Then, check the `shotfile_path` folder to see the generated segy files.
 ## FWI
 
 The first thing we want to say is that we perform the inversion test on inverse-crime data, i.e. we use the same numerical
-method for both generating the synthetic data and performing the inversion. However, once the inversion implementationn facilitates segy files reading, the inverse crime problem can be overcome. Just as in the previous case, it is also necessary to define some parameters in the YAML file (`config.yaml`). Clearly, the first step is to set the `forward` variable to false. Because the inversion code was designed to allow you to run either LSRTM or FWI you need to specific which will be run. For FWI, set `fwi` to `true`, otherwise (i.e. LSRTM), set it to `false`. Define bounding box constraints on the solution `vmin` and `vmax`, and choose one of the available gradient-based methods in `sotb-wrapper` library. You also need to inform the depth (number of layers) which the gradient must not be updated `mute_depth`. An example of the inversion parameter settings for the FWI experiment using the Marmousi II synthetic data is given below. Here we use the Limited Broyden-Fletcher-Goldfarb-Shanno method `opt_method: 'LBFGS'`
+method for both generating the synthetic data and performing the inversion. However, once the inversion implementationn facilitates segy files reading, the inverse crime problem can be overcome. Just as in the previous case, it is also necessary to define some parameters in the YAML file (`config.yaml`). Clearly, the first step is to set the `forward` variable to `false`. Because the inversion code was designed to allow you to run either LSRTM or FWI you need to specific which will be run. For FWI, set `fwi` to `true`, otherwise (i.e. LSRTM), set it to `false`. Define bounding box constraints on the solution `vmin` and `vmax`, and choose one of the available gradient-based methods in `sotb-wrapper` library. You also need to inform the depth (number of layers) which the gradient must not be updated `mute_depth`. An example of the inversion parameter settings for the FWI experiment using the Marmousi II synthetic data is given below. Here we use the Limited Broyden-Fletcher-Goldfarb-Shanno method `opt_method: 'LBFGS'`
 ``` yaml 
 forward: false
 fwi: true
@@ -98,8 +98,18 @@ After finishing the inversion process, you can generate the figures running the 
 python plot_fwi_results.py
 ```
 
+## LSRTM
 
+You must generate the linearized data before you can run the inversion experiments. Proceed as described in [Forward modeling](#forward-modeling) section and enter the required information into the YAML file to create the shot files. Keep in mind that in this case, you have to set the `born` key  in `solver_params` dictionary to `true`.
 
+Once shot files are made available, update the `config.yaml`. In this case, both keys `forward` and `fwi` must be set to `false`. Also, choose the type of gradient-based method from `sotb-wrapper` library. As there are not now box constraints, the velocity limits are simply ignored.
+
+Exactly like the previous case, you can decide whether or not to use the checkpointing technique. You must to define the checkpointing settings as explained in last section. Because the most of key-value pairs of the `solver_params` dictionary, which were used in generating the linearized data, will be used again, they are maintained as they stand in the YAML file.  The cluster setup also remains the same.
+
+Use the inversion script to execute the LSRTM test:
+```
+python inversion_script.py
+```
 
 
 
