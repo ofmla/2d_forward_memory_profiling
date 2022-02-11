@@ -1,4 +1,4 @@
-forward: false
+forward: true
 fwi: true
 vmin: 1.377
 vmax: 4.688
