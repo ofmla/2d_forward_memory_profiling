@@ -8,7 +8,7 @@ from inversion_script import main
 SafeDumper.add_representer(
     type(None),
     lambda dumper, value: dumper.represent_scalar(u'tag:yaml.org,2002:null', '')
-  )
+    )
 
 
 def inversion_setup(yaml_file, model_name, method):
