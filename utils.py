@@ -9,6 +9,7 @@ import csv
 import socket
 import os
 import h5py
+import json
 
 from examples.seismic import SeismicModel
 
@@ -197,6 +198,26 @@ def create_shot_dict(table, origin, extent):
     return shot_dict
 
 
+def save_model(model_name, datakey, data, metadata, dtype=np.float32):
+    with h5py.File(model_name, 'w') as f:
+        f.create_dataset(datakey, data=data, dtype=dtype)
+        f.create_dataset('metadata', data=json.dumps(metadata))
+
+
+def load_shot(filename, position, traces_in_shot):
+    f = so.open(filename, ignore_geometry=True)
+    num_samples = len(f.samples)
+    samp_int = f.bin[so.BinField.Interval]/1000.
+    retrieved_shot = np.zeros((num_samples, traces_in_shot))
+    shot_traces = f.trace[position:position+traces_in_shot]
+    for i, trace in enumerate(shot_traces):
+        retrieved_shot[:, i] = trace
+
+    tmax = (num_samples-1)*samp_int
+
+    return retrieved_shot, tmax, samp_int
+
+
 def limit_model_to_receiver_area(rec_coord, src_coord, origin, spacing, shape,
                                  vel, par=None, space_order=8, nbl=40, rfl=None,
                                  buffer=0):
@@ -360,28 +381,34 @@ def save_timings(shape, ckp_size, nckp, tn, nt, cube_size, dtype, ckp_type,
         writer.writerow(csv_row)
 
 
-def check_par_attr(someobject, filepath, setup_func, shape, lsrtm=False):
+def check_par_attr(someobject, filepath, setup_func, shape, fwi=True):
 
     property = getattr(someobject, 'params', None)
-    if property is None and setup_func == 'tti':
-        if lsrtm:
-            vp = np.empty(shape)
-            someobject.params = [vp]
+    if property is None:
+        if setup_func == 'tti':
+            if not fwi:
+                vp = np.empty(shape)
+                pars = ['approx_vp']
+                someobject.params = [vp]
+            else:
+                someobject.params = []
+                pars = []
+            epsilon = np.empty(shape)
+            delta = np.empty(shape)
+            theta = np.empty(shape)
+            pars.extend(['delta', 'epsilon', 'theta'])
+            someobject.params.extend([delta, epsilon, theta])
+            if len(shape) == 3:
+                phi = np.empty(shape)
+                pars.extend(['phi'])
+                someobject.params.extend([phi])
+            theta *= (np.pi/180.)  # use radians
         else:
-            someobject.params = []
-        epsilon = np.empty(shape)
-        delta = np.empty(shape)
-        theta = np.empty(shape)
-        pars = ['delta', 'epsilon', 'theta']
-        someobject.params.extend([delta, epsilon, theta])
-        if len(shape) == 3:
-            phi = np.empty(shape)
-            pars.extend(['phi'])
-            someobject.params.extend([phi])
-
+            if not fwi:
+                vp = np.empty(shape)
+                pars = ['approx_vp']
+                someobject.params = [vp]
         # Read parameters
         for file, par in zip(pars, someobject.params):
             with h5py.File(filepath+file+'.h5', 'r') as f:
                 par[:] = f[file][()]
-
-        someobject.params[-1] *= (np.pi/180.)  # use radians

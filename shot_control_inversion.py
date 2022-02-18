@@ -5,6 +5,7 @@ inversion (FWI) method or the least-squares reverse time migration (LSRTM) metho
 import numpy as np
 import json
 import h5py
+import sys
 from dask_cluster import DaskCluster
 from sotb_wrapper import interface
 from ctypes import c_int, c_float, c_bool
@@ -21,20 +22,20 @@ class ControlInversion:
         lb = None  # lower bound constraint
         ub = None  # upper bound constraint
 
+        parfile_path = dask_cluster.config_values['solver_params']['parfile_path']
+        s = 'vp_start' if dask_cluster.config_values['fwi'] else 'vp'
+
+        # Read initial guess and metadata from hdf5 file
+        with h5py.File(parfile_path + s + '.h5', 'r') as f:
+            v0 = f[s][()]
+            metadata = json.loads(f['metadata'][()])
+
+        dask_cluster.config_values['solver_params']['origin'] = metadata['origin']
+        dask_cluster.config_values['solver_params']['spacing'] = metadata['spacing']
+        shape = dask_cluster.config_values['solver_params']['shape'] = metadata['shape']
+
         if dask_cluster.config_values['fwi']:
-            # Read initial model and metadata from hdf5 file
-            parfile_path = dask_cluster.config_values['solver_params']['parfile_path']
-            with h5py.File(parfile_path + 'vp_start.h5', 'r') as f:
-                v0 = f['vp_start'][()]
-                metadata = json.loads(f['metadata'][()])
-
             X = 1.0 / (v0.reshape(-1).astype(np.float32))**2
-
-            dask_cluster.config_values['solver_params']['origin'] = metadata['origin']
-            dask_cluster.config_values['solver_params']['spacing'] = metadata['spacing']
-            dask_cluster.config_values['solver_params']['shape'] = metadata['shape']
-            dask_cluster.config_values['solver_params']['fwi'] = True
-            shape = metadata['shape']
             # dictionary_items = dask_cluster.config_values.items()
             # for item in dictionary_items:
             #    print(item)
@@ -45,14 +46,11 @@ class ControlInversion:
             vmin = dask_cluster.config_values['vmin']
             lb = np.ones((np.prod(shape),), dtype=np.float32)*1.0/vmax**2  # in [s^2/km^2]
             ub = np.ones((np.prod(shape),), dtype=np.float32)*1.0/vmin**2  # in [s^2/km^2]
-
-            g = open('gradient_zero.file', 'wb')
         else:
-            dask_cluster.config_values['solver_params']['fwi'] = False
-            # Initial guess
-            r0 = np.zeros(shape, dtype=np.float32)
+            r0 = np.zeros_like(v0, dtype=np.float32)
             X = r0.reshape(-1).astype(np.float32)
-            g = open('image_zero.file', 'wb')
+
+        g = open('gradient_zero.file', 'wb')
 
         # Create an instance of the SEISCOPE optimization toolbox (sotb) Class.
         sotb = interface.sotb_wrapper()
@@ -72,6 +70,7 @@ class ControlInversion:
         # computation of the cost and gradient associated
         # with the initial guess
         fcost, grad = dask_cluster.generate_grad_in_cluster(X)
+        sys.exit('initial gradient was computed')
         grad_preco = np.copy(grad)
 
         # Save first gradient/image
@@ -94,22 +93,24 @@ class ControlInversion:
                     grad_preco = np.copy(grad)
 
         # Helpful console writings
+        s1 = 'vp' if dask_cluster.config_values['fwi'] else 'rfl'
         print('END OF TEST')
         print('FINAL iterate is : ', X)
         if opt_meth == 'LBFGS':
             print('See the convergence history in iterate_'+opt_meth[:2]+'.dat')
-            s = 'final_result_'+opt_meth[:2]
+            s = s1+'final_result_'+opt_meth[:2]
         elif opt_meth == 'PNLCG':
             print('See the convergence history in iterate_'+opt_meth[3:]+'.dat')
-            s = 'final_result_'+opt_meth[3:]
+            s = s1+'final_result_'+opt_meth[3:]
         else:
             print('See the convergence history in iterate_'+opt_meth[1:-1]+'.dat')
-            s = 'final_result_'+opt_meth[1:-1]
+            s = s1+'final_result_'+opt_meth[1:-1]
 
         # Save final model/image
-        X = 1./np.sqrt(X)
+        if dask_cluster.config_values['fwi']:
+            X = 1./np.sqrt(X)
         g = open(s+'.file', 'wb')
         X.reshape(-1, shape[1]).astype('float32').tofile(g)
         with h5py.File(s+'.h5', 'w') as f:
-            f.create_dataset('vp', data=X.reshape(-1, shape[1]).astype('float32'))
+            f.create_dataset('dataset', data=X.reshape(-1, shape[1]).astype('float32'))
             f.create_dataset('metadata', data=json.dumps(metadata))
