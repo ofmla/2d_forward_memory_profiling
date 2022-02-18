@@ -30,7 +30,7 @@ def inversion_setup(yaml_file, model_name, method):
         else:
             data['fwi'] = False
             data['opt_method'] = method
-            data['mute_depth'] =  None
+            data['mute_depth'] = None
         # solver parameters
         data['solver_params']['parfile_path'] = "./"+args.model+"/parameters_hdf5/"
         data['solver_params']['shotfile_path'] = "./"+args.model+"/shots/"
@@ -43,7 +43,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('model', type=str, help='Name of the model')
     parser.add_argument('method', type=str, help='gradient-based method, '
-    					'valid options are LBFGS, PNLCG, PSTD)')
+                        'valid options are LBFGS, PNLCG, PSTD)')
     args = parser.parse_args()
     inversion_setup("./config/config.yaml", args.model, args.method)
     main()

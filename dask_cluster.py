@@ -4,7 +4,6 @@
 # basic imports.
 import os
 import errno
-import segyio
 import numpy as np
 import time
 import yaml
@@ -27,7 +26,7 @@ from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
 
 from pyrevolve import Revolver
 
-from utils import segy_write, make_lookup_table, save_model, humanbytes, load_shot
+from utils import segy_write, make_lookup_table, load_shot
 from utils import limit_model_to_receiver_area, extend_image, check_par_attr
 from ctypes import c_float
 

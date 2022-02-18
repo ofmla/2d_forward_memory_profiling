@@ -25,7 +25,7 @@ def get_data(command, methods):
 
 
 def make_a_plot(d, d2, lconfg):
-	'''Plot convergence and computational cost curves.'''
+    '''Plot convergence and computational cost curves.'''
     plt.subplots(figsize=(15, 5))
     plt.subplot(1, 2, 1)  # draw plot 1
     for k, v in d.items():
@@ -65,8 +65,8 @@ def main():
     strng = "head -n -3  | awk 'NR >= 10 {print $(NF)}'"
     d2 = get_data(strng, words)
 
-	with plt.style.context('dark_background'):
-		make_a_plot(d, d2, lconfg)
+    with plt.style.context('dark_background'):
+        make_a_plot(d, d2, lconfg)
 
 
 if __name__ == "__main__":
