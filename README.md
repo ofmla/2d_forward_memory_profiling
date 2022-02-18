@@ -97,6 +97,10 @@ After finishing the inversion process, you can generate the figures running the 
 ```
 python plot_fwi_results.py
 ```
+<p align="center">
+  <img src="https://github.com/ofmla/fwi-lsqrtm-python/blob/main/fwi_marmosui2_black.pdf#gh-dark-mode-only" width="500"/>
+  <img src="https://github.com/ofmla/fwi-lsqrtm-python/blob/main/fwi_marmosui2_light.pdf#gh-light-mode-only" width="500"/>
+</p>
 
 ## LSRTM
 
