@@ -70,7 +70,7 @@ class ControlInversion:
         # computation of the cost and gradient associated
         # with the initial guess
         fcost, grad = dask_cluster.generate_grad_in_cluster(X)
-        sys.exit('initial gradient was computed')
+        # sys.exit('initial gradient was computed')
         grad_preco = np.copy(grad)
 
         # Save first gradient/image
@@ -98,13 +98,13 @@ class ControlInversion:
         print('FINAL iterate is : ', X)
         if opt_meth == 'LBFGS':
             print('See the convergence history in iterate_'+opt_meth[:2]+'.dat')
-            s = s1+'final_result_'+opt_meth[:2]
+            s = s1+'_final_result_'+opt_meth[:2]
         elif opt_meth == 'PNLCG':
             print('See the convergence history in iterate_'+opt_meth[3:]+'.dat')
-            s = s1+'final_result_'+opt_meth[3:]
+            s = s1+'_final_result_'+opt_meth[3:]
         else:
             print('See the convergence history in iterate_'+opt_meth[1:-1]+'.dat')
-            s = s1+'final_result_'+opt_meth[1:-1]
+            s = s1+'_final_result_'+opt_meth[1:-1]
 
         # Save final model/image
         if dask_cluster.config_values['fwi']:

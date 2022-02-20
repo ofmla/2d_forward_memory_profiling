@@ -3,6 +3,7 @@ import yaml
 import argparse
 
 from inversion_script import main
+from generate_shot_data import model_to_dict
 
 
 SafeDumper.add_representer(
@@ -18,8 +19,9 @@ def inversion_setup(yaml_file, model_name, method):
     '''
     with open(yaml_file, 'r') as infile:
         data = yaml.full_load(infile)
-        print(data.get("solver_params"))
+
         data['forward'] = False
+        cfg = model_to_dict(model_name)
 
         if model_name == 'marmousi2':
             data['fwi'] = True
@@ -29,9 +31,10 @@ def inversion_setup(yaml_file, model_name, method):
             data['mute_depth'] = 12
         else:
             data['fwi'] = False
-            data['opt_method'] = method
+            data['opt_meth'] = method
             data['mute_depth'] = None
         # solver parameters
+        data['solver_params'] = cfg['solver_params']
         data['solver_params']['parfile_path'] = "./"+args.model+"/parameters_hdf5/"
         data['solver_params']['shotfile_path'] = "./"+args.model+"/shots/"
 
