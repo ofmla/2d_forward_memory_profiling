@@ -413,4 +413,4 @@ def check_par_attr(someobject, filepath, setup_func, shape, fwi=True):
                 par[:] = f[file][()]
 
         if setup_func == 'tti':
-            theta *= (np.pi/180.)  # use radians		
+            theta *= (np.pi/180.)  # use radians
