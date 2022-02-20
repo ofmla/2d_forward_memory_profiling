@@ -411,6 +411,6 @@ def check_par_attr(someobject, filepath, setup_func, shape, fwi=True):
         for file, par in zip(pars, someobject.params):
             with h5py.File(filepath+file+'.h5', 'r') as f:
                 par[:] = f[file][()]
-                
+
         if setup_func == 'tti':
-        	theta *= (np.pi/180.)  # use radians	
+            theta *= (np.pi/180.)  # use radians		

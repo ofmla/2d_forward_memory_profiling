@@ -5,7 +5,6 @@ inversion (FWI) method or the least-squares reverse time migration (LSRTM) metho
 import numpy as np
 import json
 import h5py
-import sys
 from dask_cluster import DaskCluster
 from sotb_wrapper import interface
 from ctypes import c_int, c_float, c_bool
@@ -70,7 +69,6 @@ class ControlInversion:
         # computation of the cost and gradient associated
         # with the initial guess
         fcost, grad = dask_cluster.generate_grad_in_cluster(X)
-        # sys.exit('initial gradient was computed')
         grad_preco = np.copy(grad)
 
         # Save first gradient/image
