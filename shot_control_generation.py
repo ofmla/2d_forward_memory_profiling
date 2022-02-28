@@ -1,6 +1,5 @@
 """
-This module produces shot gathers in segy format. Acoustic, viscoacoustic and anisotropic
-wave equations for TTI media can be used. Linearized Born modelling is also supported.
+This module produces shot gathers in segy format.
 """
 from dask_cluster import DaskCluster
 

@@ -16,19 +16,12 @@ from dask_jobqueue import SLURMCluster
 from dask.distributed import Client, LocalCluster
 
 from devito import *
-from examples.checkpointing import DevitoCheckpoint, CheckpointOperator
-from examples.seismic import AcquisitionGeometry, TimeAxis, Receiver
-from examples.seismic.tti import AnisotropicWaveSolver
-from examples.seismic.tti.operators import kernel_centered_2d
+
+from examples.seismic import AcquisitionGeometry, SeismicModel
 from examples.seismic.acoustic import AcousticWaveSolver
-from examples.seismic.acoustic.operators import iso_stencil
-from examples.seismic.viscoacoustic import ViscoacousticWaveSolver
+from examples.seismic import TimeAxis, RickerSource, Receiver
 
-from pyrevolve import Revolver
-
-from utils import segy_write, make_lookup_table, load_shot
-from utils import limit_model_to_receiver_area, extend_image, check_par_attr
-from ctypes import c_float
+from utils import segy_write, humanbytes
 
 
 class DaskCluster:
@@ -61,7 +54,7 @@ class DaskCluster:
             # single-threaded execution, as this is actually best for the workload
             cluster = LocalCluster(n_workers=self.config_values["n_workers"],
                                    threads_per_worker=1,
-                                   memory_limit='4GB', death_timeout=60,
+                                   memory_limit='2.5GB', death_timeout=60,
                                    resources={'process': 1})
         else:
             cluster = SLURMCluster(queue=self.config_values["queue"],
@@ -86,54 +79,28 @@ class DaskCluster:
     def _set_tasks_from_files(self):
         "Returns a dict which contains the list of tasks to be run"
 
-        if self.config_values["forward"]:
-            file_src = self.config_values['file_src']
-            file_rec = self.config_values['file_rec']
+        nshots = self.config_values['nshots']
+        nrecs = self.config_values['nrecs']
+        model_size = self.config_values['model_size']
+        src_step = self.config_values['src_step']
+        # Define acquisition geometry: receivers
+        # First, sources position
+        src_coord = np.empty((nshots, 2))
+        src_coord[:, 0] = np.arange(start=0., stop=model_size, step=src_step)
+        src_coord[:, -1] = self.config_values['src_depth']
+        # Initialize receivers for synthetic and imaging data
+        rec_coord = np.empty((nrecs, 2))
+        rec_coord[:, 0] = np.linspace(0, model_size, num=nrecs)
+        rec_coord[:, 1] = self.config_values['rec_depth']
 
-            if file_src is not None and file_rec is not None:
-                with h5py.File(file_src, 'r') as f:
-                    a_group_key = list(f.keys())[0]
-                    src_coord = f[a_group_key][()]
-                nshots = src_coord.shape[0]
-
-                with h5py.File(file_rec, 'r') as f:
-                    a_group_key = list(f.keys())[0]
-                    rec_coord = f[a_group_key][()]
-            else:
-                nshots = self.config_values['nshots']
-                nrecs = self.config_values['nrecs']
-                model_size = self.config_values['model_size']
-                src_step = self.config_values['src_step']
-                # Define acquisition geometry: receivers
-                # First, sources position
-                src_coord = np.empty((nshots, 2))
-                src_coord[:, 0] = np.arange(start=0., stop=model_size, step=src_step)
-                src_coord[:, -1] = self.config_values['src_depth']
-                # Initialize receivers for synthetic and imaging data
-                rec_coord = np.empty((nrecs, 2))
-                rec_coord[:, 0] = np.linspace(0, model_size, num=nrecs)
-                rec_coord[:, 1] = self.config_values['rec_depth']
-
-            self.tasks_dict = {i: {'Source': src_coord[i],
-                                   'Receivers': rec_coord} for i in range(nshots)}
-        else:
-            # Read chunk of shots
-            segy_dir_files = self.config_values['solver_params']['shotfile_path']
-            segy_files = [f for f in os.listdir(segy_dir_files) if f.endswith('.segy')]
-            segy_files = [segy_dir_files + sub for sub in segy_files]
-
-            # Create a dictionary of shots
-            self.tasks_dict = {}
-            for count, sfile in enumerate(segy_files, start=1):
-                self.tasks_dict.update({str(count) if k == 1 else k: v
-                                       for k, v in make_lookup_table(sfile).items()})
+        self.tasks_dict = {i: {'Source': src_coord[i],
+                               'Receivers': rec_coord} for i in range(nshots)}
 
     def launch_tasks(self, func):
 
         shot_futures = []
         all_shot_results = []
-        par = self.client.scatter({**self.config_values['solver_params'],
-                                   **self.config_values['ckp_params']}, broadcast=True)
+        par = self.client.scatter({**self.config_values['solver_params']}, broadcast=True)
 
         shot_master_list = [(lambda d: d.update(id=key) or d)(val)
                             for (key, val) in self.tasks_dict.items()]
@@ -167,65 +134,6 @@ class DaskCluster:
         else:
             raise Exception("Some error occurred. Please check logs")
 
-    def generate_grad_in_cluster(self, X):
-        "Gradient computing for all the shots in parallel in a dask cluster"
-
-        start_time = time.time()
-        self.client.restart()
-
-        shape = self.config_values['solver_params']['shape']
-        spacing = self.config_values['solver_params']['spacing']
-        fwi = self.config_values['fwi']
-        ckp = self.config_values['ckp_params']['checkpointing']
-
-        if fwi:
-            s = 'vp_current.h5'
-            if ckp:
-                func = DaskCluster.grad_fwi_in_worker_ckp
-            else:
-                func = DaskCluster.grad_fwi_in_worker
-        else:
-            s = 'img_current.h5'
-            func = DaskCluster.grad_lsrtm_in_worker
-
-        with h5py.File(s, 'w') as f:
-            f.create_dataset('current_dataset', data=X.reshape(-1, shape[1]))
-
-        all_shot_results = self.launch_tasks(func)
-
-        if len(shape) == 2:
-            domain_size = ((shape[0] - 1) * spacing[0], (shape[1] - 1) * spacing[1])
-        else:
-            domain_size = ((shape[0] - 1) * spacing[0], (shape[1] - 1) * spacing[1],
-                           (shape[2] - 1) * spacing[2])
-
-        grid = Grid(shape=shape, extent=domain_size)
-        f = Function(name='f', grid=grid)
-        grad = Function(name='g', grid=grid)
-        grad_update = Inc(grad, f)
-        op_grad = Operator([grad_update])
-
-        grad.data[:] = all_shot_results[0][1]
-        objective = all_shot_results[0][0]
-        i = 1
-
-        # Iterating using while loop
-        while i < len(all_shot_results):
-            f.data[:] = all_shot_results[i][1]
-            op_grad.apply()
-            objective += all_shot_results[i][0]
-            i += 1
-
-        mute_depth = self.config_values['mute_depth']
-        if mute_depth is not None:
-            grad.data[:, 0:mute_depth] = 0.
-
-        elapsed_time = time.time() - start_time
-        print("Cost_fcn eval took {0:8.2f} sec - Cost_fcn={1:10.3E}".format(elapsed_time,
-                                                                            objective))
-
-        return c_float(objective), np.ravel(grad.data[:]).astype(np.float32)
-
     @staticmethod
     def gen_shot_in_worker(shot_dict, solver_params):
 
@@ -245,39 +153,13 @@ class DaskCluster:
         origin = metadata['origin']
         shape = metadata['shape']
         spacing = metadata['spacing']
-        setup_func = solver_params['setup_func']
         model_name = solver_params['model_name']
 
         #
-        if setup_func == 'acoustic':
-            vp = np.empty(shape)
-            pars = ['vp']
-            params = [vp]
-        elif setup_func == 'tti':
-            vp = np.empty(shape)
-            epsilon = np.empty(shape)
-            delta = np.empty(shape)
-            theta = np.empty(shape)
-            pars = ['vp', 'delta', 'epsilon', 'theta']
-            params = [vp, delta, epsilon, theta]
-            if len(shape) == 3:
-                phi = np.empty(shape)
-                pars.extend(['phi'])
-                params.extend([phi])
-        else:
-            vp = np.empty(shape)
-            qp = np.empty(shape)
-            rho = np.empty(shape)
-            pars = ['vp', 'qp', 'rho']
-            params = [vp, qp, rho]
-
+        vp = np.empty(shape)
         # Read medium parameters
-        for file, par in zip(pars, params):
-            with h5py.File(solver_params['parfile_path']+file+'.h5', 'r') as f:
-                par[:] = f[file][()]
-
-        if setup_func == 'tti':
-            theta *= (np.pi/180.)  # use radians
+        with h5py.File(solver_params['parfile_path']+'vp.h5', 'r') as f:
+            vp[:] = f['vp'][()]
 
         # Get src/rec coords
         src_coord = np.array(shot_dict['Source']).reshape((1, len(shape)))
@@ -289,51 +171,41 @@ class DaskCluster:
         f0 = solver_params['f0']
         t0 = solver_params['t0']
         tn = solver_params['tn']
+        use_solver = solver_params['use_solver']
 
-        params = None if setup_func == 'acoustic' else params[1:]
-        model = limit_model_to_receiver_area(rec_coord, src_coord, origin, spacing,
-                                             shape, vp, params, space_order,
-                                             nbl, buffer=10)[0]
+        model = SeismicModel(vp=vp, origin=origin, shape=vp.shape, spacing=spacing,
+                             space_order=space_order, nbl=nbl, bcs="damp", dtype=dtype)
 
-        if solver_params['born']:
-            model0 = limit_model_to_receiver_area(rec_coord, src_coord, origin, spacing,
-                                                  shape, vp, params, space_order,
-                                                  nbl, buffer=10)[0]
-        # Only keep receivers within the model'
-        xmin = model.origin[0]
-        idx_xrec = np.where(rec_coord[:, 0] < xmin)[0]
-        is_empty = idx_xrec.size == 0
-        if not is_empty:
-            rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
-
-        if rec_coord.shape[0] < 2*nbl:
-            s = 'Shot {0:d} located too closely to the origin, therefore,'\
-                'it is not modeled'
-            print(s.format(shot_dict['id']))
-            return True
-
-        # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
-                                       f0=f0, src_type='Ricker')
-
-        # Set up solver.
-        if setup_func == 'tti':
-            solver = AnisotropicWaveSolver(model, geometry, space_order=space_order)
-        elif setup_func == 'viscoacoustic':
-            solver = ViscoacousticWaveSolver(model, geometry, space_order=space_order,
-                                             time_order=1, kernel='sls')
-        else:
+        autotune = ('aggressive', 'runtime') if len(shape) == 3 else False
+        if use_solver:
+            # Geometry for current shot
+            geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
+                                           f0=f0, src_type='Ricker')
+            # Set up solver.
             solver = AcousticWaveSolver(model, geometry, space_order=space_order)
-
-        if solver_params['born']:
-            gaussian_smooth(model0.vp, sigma=(5, 5))
-            dm = (model.vp.data**(-2) - model0.vp.data**(-2))
-
-            # Generate synthetic data from true model
-            dobs = solver.jacobian(dm, vp=model0.vp)[0]
-        else:
-            autotune = ('aggressive', 'runtime') if len(shape) == 3 else False
             dobs = solver.forward(autotune=autotune)[0]
+        else:
+            # Create the forward operator step by step as in tutorial 01
+            dt2 = model.critical_dt
+            time_range = TimeAxis(start=t0, stop=tn, step=dt2)
+            src = RickerSource(name='src', grid=model.grid, f0=f0,
+                               npoint=1, time_range=time_range)
+            src.coordinates.data[:] = src_coord
+            dobs = Receiver(name='dobs', grid=model.grid, npoint=rec_coord.shape[0],
+                            time_range=time_range)
+            dobs.coordinates.data[:] = rec_coord
+
+            # Define the wavefield with the size of the model and the time dimension
+            u = TimeFunction(name="u", grid=model.grid, time_order=2,
+                             space_order=space_order)
+            pde = model.m * u.dt2 - u.laplace + model.damp * u.dt
+            stencil = Eq(u.forward, solve(pde, u.forward))
+            #
+            src_term = src.inject(field=u.forward, expr=src * dt2**2 / model.m)
+            rec_term = dobs.interpolate(expr=u.forward)
+            op = Operator([stencil] + src_term + rec_term, subs=model.spacing_map)
+
+            op(time=time_range.num-1, dt=model.critical_dt, autotune=autotune)
 
         print('Shot with time interval of {} ms'.format(model.critical_dt))
 
@@ -348,468 +220,19 @@ class DaskCluster:
             data = dobs
         # Save shot in segy format
         if len(shape) == 3:
-            segy_write(data.data[:], [geometry.src.coordinates.data[0, 0]],
-                       [geometry.src.coordinates.data[0, -1]],
+            segy_write(data.data[:], [src_coord[0, 0]],
+                       [src_coord[0, -1]],
                        data.coordinates.data[:, 0],
                        data.coordinates.data[:, -1], dt, filename,
-                       sourceY=[geometry.src.coordinates.data[0, 1]],
+                       sourceY=[src_coord[0, 1]],
                        groupY=data.coordinates.data[:, -1])
         else:
-            segy_write(data.data[:], [geometry.src.coordinates.data[0, 0]],
-                       [geometry.src.coordinates.data[0, -1]],
+            segy_write(data.data[:], [src_coord[0, 0]],
+                       [src_coord[0, -1]],
                        data.coordinates.data[:, 0],
                        data.coordinates.data[:, -1], dt, filename)
-
-        return True
-
-    @staticmethod
-    def grad_fwi_in_worker(shot_dict, solver_params):
-
-        dtype = solver_params['dtype']
-
-        if dtype == 'float32':
-            dtype = np.float32
-        elif dtype == 'float64':
-            dtype = np.float64
-        else:
-            raise ValueError("Invalid dtype")
-
-        origin = solver_params['origin']
-        shape = solver_params['shape']
-        spacing = solver_params['spacing']
-        setup_func = solver_params['setup_func']
-
-        #
-        hf = h5py.File('vp_current.h5', 'r')
-        vp = np.zeros(shape, dtype=dtype)
-        hf['current_dataset'].read_direct(vp_updt)
-        hf.close()
-        vp = 1.0/np.sqrt(vp)
-
-        check_par_attr(DaskCluster.grad_fwi_in_worker,
-                       solver_params['parfile_path'], setup_func, shape)
-
-        # Get a single shot as a numpy array
-        retrieved_shot, tn, dt = load_shot(shot_dict['filename'],
-                                           shot_dict['Trace_Position'],
-                                           shot_dict['Num_Traces'])
-
-        if len(shape) == 3:
-            src_coord = np.array(shot_dict['Source']).reshape((1, 3))
-            rec_coord = np.array(shot_dict['Receivers'])
-        else:
-            src_coord = np.array([shot_dict['Source'][0],
-                                  shot_dict['Source'][-1]]).reshape((1, 2))
-            rec_coord = np.array([(r[0], r[-1]) for r in shot_dict['Receivers']])
-
-        space_order = solver_params['space_order']
-        nbl = solver_params['nbl']
-        f0 = solver_params['f0']
-        t0 = solver_params['t0']
-
-        rfl = None
-        params = DaskCluster.grad_fwi_in_worker.params
-        model, _ = limit_model_to_receiver_area(rec_coord, src_coord, origin,
-                                                spacing, shape, vp, params,
-                                                space_order, nbl, rfl, 10)
-
-        # Only keep receivers within the model'
-        xmin = model.origin[0]
-        idx_xrec = np.where(rec_coord[:, 0] < xmin)[0]
-        is_empty = idx_xrec.size == 0
-
-        if not is_empty:
-            idx_tr = np.where(rec_coord[:, 0] >= xmin)[0]
-            rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
-
-        # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
-                                       f0=f0, src_type='Ricker')
-
-        # Set up solver.
-        if setup_func == 'tti':
-            solver = AnisotropicWaveSolver(model, geometry, space_order=space_order)
-        else:
-            solver = AcousticWaveSolver(model, geometry, space_order=space_order)
-
-        src_illum = Function(name='src_illum', grid=model.grid)
-        grad = Function(name='grad', grid=model.grid)
-        eps = np.finfo(dtype).eps
-
-        rev_op = DaskCluster.ImagingOperator(geometry, model, grad, src_illum,
-                                             space_order, setup_func)
-
-        # Here we assume that there is enough memory
-        du = TimeFunction(name='du', grid=model.grid, time_order=2,
-                          space_order=space_order)
-        if setup_func == 'tti':
-            dv = TimeFunction(name='dv', grid=model.grid, time_order=2,
-                              space_order=space_order)
-            rec0, u0, v0 = solver.forward(vp=model.vp, save=True)[0:-1]
-        else:
-            rec0, u0 = solver.forward(vp=model.vp, save=True)[0:2]
-
-        time_range = TimeAxis(start=0, stop=tn, step=dt)
-        dobs = Receiver(name='dobs', grid=model.grid, time_range=time_range,
-                        coordinates=geometry.rec_positions)
-        if not is_empty:
-            dobs.data[:] = retrieved_shot[:, idx_tr]
-        else:
-            dobs.data[:] = retrieved_shot[:]
-        dobs_resam = dobs.resample(num=geometry.nt)
-
-        residual = Receiver(name='residual', grid=solver.model.grid,
-                            data=rec0.data - dobs_resam.data,
-                            time_range=solver.geometry.time_axis,
-                            coordinates=solver.geometry.rec_positions)
-
-        objective = .5*np.linalg.norm(residual.data.ravel())**2
-
-        if setup_func == 'tti':
-            rev_op(u0=u0, v0=v0, du=du, dv=dv, epsilon=model.epsilon,
-                   delta=model.delta, theta=model.theta, vp=model.vp,
-                   dt=model.critical_dt, rec=residual)
-        else:
-            rev_op(u0=u0, du=du, vp=model.vp, dt=model.critical_dt, rec=residual)
-
-        eq = Eq(src_illum, grad/(src_illum+eps))
-        op = Operator(eq)
-        op.apply()
-        grad = extend_image(origin, vp, model, src_illum)
-
-        del u0
-        if setup_func == 'tti':
-            del v0
-        del solver
-        del rev_op
-
-        return objective, grad
-
-    @staticmethod
-    def grad_lsrtm_in_worker(shot_dict, solver_params):
-
-        dtype = solver_params['dtype']
-
-        if dtype == 'float32':
-            dtype = np.float32
-        elif dtype == 'float64':
-            dtype = np.float64
-        else:
-            raise ValueError("Invalid dtype")
-
-        origin = solver_params['origin']
-        shape = solver_params['shape']
-        spacing = solver_params['spacing']
-        setup_func = solver_params['setup_func']
-
-        #
-        hf = h5py.File('img_current.h5', 'r')
-        rfl = np.zeros(shape, dtype=dtype)
-        hf['current_dataset'].read_direct(rfl)
-        hf.close()
-
-        check_par_attr(DaskCluster.grad_lsrtm_in_worker,
-                       solver_params['parfile_path'],
-                       setup_func, shape, fwi=False)
-
-        # Get a single shot as a numpy array
-        retrieved_shot, tn, dt = load_shot(shot_dict['filename'],
-                                           shot_dict['Trace_Position'],
-                                           shot_dict['Num_Traces'])
-
-        if len(shape) == 3:
-            src_coord = np.array(shot_dict['Source']).reshape((1, 3))
-            rec_coord = np.array(shot_dict['Receivers'])
-        else:
-            src_coord = np.array([shot_dict['Source'][0],
-                                  shot_dict['Source'][-1]]).reshape((1, 2))
-            rec_coord = np.array([(r[0], r[-1]) for r in shot_dict['Receivers']])
-
-        space_order = solver_params['space_order']
-        nbl = solver_params['nbl']
-        f0 = solver_params['f0']
-        t0 = solver_params['t0']
-
-        vp = DaskCluster.grad_lsrtm_in_worker.params[0]
-        params = None
-        if setup_func == 'tti':
-            params = DaskCluster.grad_lsrtm_in_worker.params[1:]
-        model, rfl_trimmed = limit_model_to_receiver_area(rec_coord, src_coord, origin,
-                                                          spacing, shape, vp, params,
-                                                          space_order, nbl, rfl, 10)
-
-        # Only keep receivers within the model'
-        xmin = model.origin[0]
-        idx_xrec = np.where(rec_coord[:, 0] < xmin)[0]
-        is_empty = idx_xrec.size == 0
-
-        if not is_empty:
-            idx_tr = np.where(rec_coord[:, 0] >= xmin)[0]
-            rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
-
-        # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
-                                       f0=f0, src_type='Ricker')
-
-        # Set up solver.
-        if setup_func == 'tti':
-            solver = AnisotropicWaveSolver(model, geometry, space_order=space_order)
-        else:
-            solver = AcousticWaveSolver(model, geometry, space_order=space_order)
-
-        grad = Function(name='grad', grid=model.grid)
-        src_illum = Function(name='src_illum', grid=model.grid)
-        rfl_sgle = Function(name="rfl_sgle", grid=model.grid)
-        rfl_sgle.data[nbl:-nbl, nbl:-nbl] = rfl_trimmed[:]
-        eps = np.finfo(dtype).eps
-
-        rev_op = DaskCluster.ImagingOperator(geometry, model, grad, src_illum,
-                                             space_order, setup_func)
-
-        # Here we assume that there is enough memory
-        # itemsize = np.dtype(np.float32).itemsize
-        # full_fld_mem = model.vp.size*itemsize*geometry.nt*2.
-        # msg_strng = "enough memory to save full fld: {} == {}\n"
-        # print(msg_strng.format(full_fld_mem, humanbytes(full_fld_mem)))
-
-        du = TimeFunction(name='du', grid=model.grid, time_order=2,
-                          space_order=space_order)
-        if setup_func == 'tti':
-            dv = TimeFunction(name='dv', grid=model.grid, time_order=2,
-                              space_order=space_order)
-            u0, v0 = solver.forward(vp=model.vp, save=True)[1:-1]
-        else:
-            u0 = solver.forward(vp=model.vp, save=True)[1]
-
-        time_range = TimeAxis(start=0, stop=tn, step=dt)
-        dobs = Receiver(name='dobs', grid=model.grid, time_range=time_range,
-                        coordinates=geometry.rec_positions)
-        if not is_empty:
-            dobs.data[:] = retrieved_shot[:, idx_tr]
-        else:
-            dobs.data[:] = retrieved_shot[:]
-        dobs_resam = dobs.resample(num=geometry.nt)
-
-        rec0 = solver.jacobian(rfl_sgle, vp=model.vp)[0]
-        residual = Receiver(name='residual', grid=solver.model.grid,
-                            data=rec0.data - dobs_resam.data,
-                            time_range=solver.geometry.time_axis,
-                            coordinates=solver.geometry.rec_positions)
-
-        objective = .5*np.linalg.norm(residual.data.ravel())**2
-
-        if setup_func == 'tti':
-            rev_op(u0=u0, v0=v0, du=du, dv=dv, epsilon=model.epsilon,
-                   delta=model.delta, theta=model.theta, vp=model.vp,
-                   dt=model.critical_dt, rec=residual)
-        else:
-            rev_op(u0=u0, du=du, vp=model.vp, dt=model.critical_dt, rec=residual)
-
-        eq = Eq(src_illum, grad/(src_illum+eps))
-        op = Operator(eq)
-        op.apply()
-        grad = extend_image(origin, vp, model, src_illum)
-
-        del u0
-        if setup_func == 'tti':
-            del v0
-        del solver
-        del rev_op, op
-        clear_cache()
+        # del u
+        # clear_cache()
         # gc.collect()
 
-        return objective, grad
-
-    @staticmethod
-    def grad_fwi_in_worker_ckp(shot_dict, solver_params):
-
-        dtype = solver_params['dtype']
-
-        if dtype == 'float32':
-            dtype = np.float32
-        elif dtype == 'float64':
-            dtype = np.float64
-        else:
-            raise ValueError("Invalid dtype")
-
-        origin = solver_params['origin']
-        shape = solver_params['shape']
-        spacing = solver_params['spacing']
-        setup_func = solver_params['setup_func']
-
-        #
-        hf = h5py.File('vp_current.h5', 'r')
-        vp = np.zeros(shape, dtype=dtype)
-        hf['current_dataset'].read_direct(vp)
-        hf.close()
-        vp = 1.0/np.sqrt(vp)
-
-        check_par_attr(DaskCluster.grad_fwi_in_worker_ckp,
-                       solver_params['parfile_path'], setup_func, shape)
-
-        # Get a single shot as a numpy array
-        retrieved_shot, tn, dt = DaskCluster.load_shot(shot_dict['filename'],
-                                                       shot_dict['Trace_Position'],
-                                                       shot_dict['Num_Traces'])
-
-        if len(shape) == 3:
-            src_coord = np.array(shot_dict['Source']).reshape((1, 3))
-            rec_coord = np.array(shot_dict['Receivers'])
-        else:
-            src_coord = np.array([shot_dict['Source'][0],
-                                  shot_dict['Source'][-1]]).reshape((1, 2))
-            rec_coord = np.array([(r[0], r[-1]) for r in shot_dict['Receivers']])
-
-        space_order = solver_params['space_order']
-        nbl = solver_params['nbl']
-        f0 = solver_params['f0']
-        t0 = solver_params['t0']
-
-        rfl = None
-        params = DaskCluster.grad_fwi_in_worker_ckp.params
-        model, _ = limit_model_to_receiver_area(rec_coord, src_coord, origin,
-                                                spacing, shape, vp, params,
-                                                space_order, nbl, rfl, 10)
-
-        # Only keep receivers within the model'
-        xmin = model.origin[0]
-        idx_xrec = np.where(rec_coord[:, 0] < xmin)[0]
-        is_empty = idx_xrec.size == 0
-
-        if not is_empty:
-            idx_tr = np.where(rec_coord[:, 0] >= xmin)[0]
-            rec_coord = np.delete(rec_coord, idx_xrec, axis=0)
-
-        # Geometry for current shot
-        geometry = AcquisitionGeometry(model, rec_coord, src_coord, t0, tn,
-                                       f0=f0, src_type='Ricker')
-
-        # Set up solver.
-        save = False
-        solver = AcousticWaveSolver(model, geometry, space_order=space_order)
-        du = TimeFunction(name='du', grid=model.grid, time_order=2,
-                          space_order=space_order)
-        l = [du]
-
-        grad = Function(name='grad', grid=model.grid)
-        src_illum = Function(name='src_illum', grid=model.grid)
-        eps = np.finfo(dtype).eps
-
-        rev_op = DaskCluster.ImagingOperator(geometry, model, grad, src_illum,
-                                             space_order, setup_func, save=save)
-
-        if setup_func == 'tti':
-            solver = AnisotropicWaveSolver(model, geometry, space_order=space_order)
-            dv = TimeFunction(name='dv', grid=model.grid, time_order=2,
-                              space_order=space_order)
-            l.extend([dv])
-
-        time_range = TimeAxis(start=0, stop=tn, step=dt)
-        dobs = Receiver(name='dobs', grid=model.grid, time_range=time_range,
-                        coordinates=geometry.rec_positions)
-        rec0 = Receiver(name='rec0', grid=model.grid, time_range=geometry.time_axis,
-                        coordinates=geometry.rec_positions)
-        residual = Receiver(name='residual', grid=model.grid,
-                            time_range=geometry.time_axis,
-                            coordinates=geometry.rec_positions)
-        if not is_empty:
-            dobs.data[:] = retrieved_shot[:, idx_tr]
-        else:
-            dobs.data[:] = retrieved_shot[:]
-        dobs_resam = dobs.resample(num=geometry.nt)
-
-        cp = DevitoCheckpoint(l)
-        fwd_op = solver.op_fwd(save=save)
-        fwd_op.cfunction
-        rev_op.cfunction
-
-        if setup_func == 'tti':
-            wrap_fw = CheckpointOperator(fwd_op, src=geometry.src, rec=rec0,
-                                         u=du, v=dv, vp=model.vp, epsilon=model.epsilon,
-                                         delta=model.delta, theta=model.theta,
-                                         dt=model.critical_dt)
-            wrap_rev = CheckpointOperator(rev_op, u0=du, v0=dv, vp=model.vp,
-                                          epsilon=model.epsilon, delta=model.delta,
-                                          theta=model.theta, dt=model.critical_dt,
-                                          rec=residual)
-        else:
-            wrap_fw = CheckpointOperator(fwd_op, src=geometry.src, rec=rec0,
-                                         u=du, vp=model.vp, dt=model.critical_dt)
-            wrap_rev = CheckpointOperator(rev_op, u0=du, vp=model.vp,
-                                          dt=model.critical_dt, rec=residual)
-
-        # Set Revolve
-        if solver_params['pct_ckp'] is not None:
-            pct_ckp = solver_params['pct_ckp']
-        else:
-            pct_ckp = 0.01
-        n_checkpoints = int(pct_ckp * geometry.nt)
-
-        # Run forward
-        wrp = Revolver(cp, wrap_fw, wrap_rev, n_checkpoints, dobs_resam.shape[0]-2)
-        wrp.apply_forward()
-
-        # Compute gradient from data residual and update objective function
-        residual.data[:] = rec0.data[:] - dobs_resam.data[:]
-
-        objective = .5*np.linalg.norm(residual.data.ravel())**2
-        wrp.apply_reverse()
-
-        eq = Eq(src_illum, grad/(src_illum+eps))
-        op = Operator(eq)()
-        grad = extend_image(origin, vp, model, src_illum)
-
-        del op
-        del solver
-        del rev_op
-        del wrp
-        gc.collect()
-
-        return objective, grad
-
-    @staticmethod
-    def ImagingOperator(geometry, model, image, src_illum, space_order,
-                        setup_func, save=True):
-
-        dt = geometry.dt
-        time_order = 2
-
-        rec = Receiver(name='rec', grid=model.grid, time_range=geometry.time_axis,
-                       npoint=geometry.nrec)
-
-        # Gradient symbol and wavefield symbols
-        u0 = TimeFunction(name='u0', grid=model.grid, save=geometry.nt if save
-                          else None, time_order=time_order, space_order=space_order)
-        du = TimeFunction(name="du", grid=model.grid, save=None,
-                          time_order=time_order, space_order=space_order)
-        if setup_func == 'tti':
-            v0 = TimeFunction(name='v0', grid=model.grid, save=geometry.nt if save
-                              else None, time_order=time_order, space_order=space_order)
-            dv = TimeFunction(name="dv", grid=model.grid, save=None,
-                              time_order=time_order, space_order=space_order)
-            # FD kernels of the PDE
-            eqn = kernel_centered_2d(model, du, dv, space_order, forward=False)
-
-            image_update = Inc(image, - (u0.dt2 * du + v0.dt2 * dv))
-            src_illum_updt = Eq(src_illum, src_illum + (u0 + v0)**2)
-
-            # Add expression for receiver injection
-            rec_term = rec.inject(field=du.backward, expr=rec * dt**2 / model.m)
-            rec_term += rec.inject(field=dv.backward, expr=rec * dt**2 / model.m)
-
-            # Substitute spacing terms to reduce flops
-            return Operator(eqn + rec_term + [image_update] +
-                            [src_illum_updt], subs=model.spacing_map)
-        else:
-            # Define the wave equation, but with a negated damping term
-            eqn = iso_stencil(du, model, kernel='OT2', forward=False)
-
-            # Define residual injection at the location of the forward receivers
-            res_term = rec.inject(field=du.backward, expr=rec * dt**2 / model.m)
-
-            # Correlate u and v for the current time step and add it to the image
-            image_update = Inc(image, - u0.dt2 * du)
-            src_illum_updt = Eq(src_illum, src_illum + u0**2)
-
-            return Operator(eqn + res_term + [image_update] +
-                            [src_illum_updt], subs=model.spacing_map)
+        return True
