@@ -45,7 +45,7 @@ class DaskCluster:
         if "processes" not in self.config_values:
             self.config_values["processes"] = 1
         if "memory" not in self.config_values:
-            self.config_values["memory"] = 320
+            self.config_values["memory"] = 2.5
         if "job_extra" not in self.config_values:
             self.config_values["job_extra"] = ['-e slurm-%j.err', '-o slurm-%j.out',
                                                '--job-name="dask_task"']
@@ -54,7 +54,8 @@ class DaskCluster:
             # single-threaded execution, as this is actually best for the workload
             cluster = LocalCluster(n_workers=self.config_values["n_workers"],
                                    threads_per_worker=1,
-                                   memory_limit='2.5GB', death_timeout=60,
+                                   memory_limit=str(self.config_values["memory"])+"GB",
+                                   death_timeout=60,
                                    resources={'process': 1})
         else:
             cluster = SLURMCluster(queue=self.config_values["queue"],
