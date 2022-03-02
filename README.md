@@ -2,6 +2,16 @@
 
 This repository provides simple Python implementations of 2D forward modeling for acoustic media. The implementations are based on the [Devito](https://www.devitoproject.org/) and [Dask](https://dask.org/) libraries. The [h5py](https://github.com/h5py/h5py), [segyio](https://github.com/equinor/segyio) packages are also used and the 2-D Marmousi model is used in the experiments. The main goal here is to monitor the memory during the execution of the modeling using the [memory-profile](https://pypi.org/project/memory-profiler/) tool.
 
+In a nutshell, this is the full python packages required
+
++ devito
++ segyio
++ h5py
++ memory_profiler
++ PyYAML
++ dask-jobqueue
+
+
 ## Forward modeling
 
 You can generate synthetic seismic data in parallel or sequential way. Aditionally, you can choose between to use the `AcousticWaveSolver` Class from the Devito's folder `examples` or a Devito `Operator`. Thus, there are four possible options for generating the shot gathers:
@@ -34,7 +44,9 @@ extra_job:
 ```
 To optimize the processing of a large number of shots, we divided them into batches. The number of shots per batch is set in `shot_batch_size` and is equal to the number of workers `n_workers`. If the local cluster configuration is used, the `memory` key represents the memory limit (in GB) per worker processes. On the contrary, it represents the total amount of memory (in GB) that the code could possibly use (not the memory per worker). For the local cluster configuration, only `n_workers` and `memory` parameters are of interest.  The keys `queue`, `project` and `extra_job` are meaningful only in the case of non-local cluster usage.
 
-After the configuration is completed, you can profile each of the options provided in the above list using `GNU Make`. To do so, you can run `make` with the specific target for each option. For first and second options, use 
+### How to run the tests
+
+After the configuration is completed, you can profile each of the options provided in the above list using `GNU Make`. To do so, you can run `make` with the specific target for each option. For first and second options, use
 ```
 make serial.solver
 ```
@@ -58,4 +70,4 @@ In each case, check the `shotfile_path` folder to see the generated segy files. 
 |<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_1.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_2.png">|
 |<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_3.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_4.png">|
 
-In the parallel case is possible to see a remarkable increase in the memory for both cases, when `Operator` as `AcousticWaveSolver` class are used. Although, each dask task (dedicated to the modleing of one shot) creates its own `Operator` or `solver` according to the case, I did not expect for a such increasing because theoretically the memory shoul be released after each function call. In the sequential case, the results are somewhat curious. When the `Operator` is used, the memory is almost constant over time, but when an `AcousticWaveSolver` instance is created and the class method `forward` is called repeatedly, the level of memory increases significantly. Since the memory comsumption was not approximately the same in both cases, it is possible that the `AcousticWaveSolver` class is not working as expected. 
+In the parallel case is possible to see a remarkable increase in the memory for both cases, when `Operator` as `AcousticWaveSolver` class are used. Although, each dask task (dedicated to the modleing of one shot) creates its own `Operator` or `solver` according to the case, I did not expect for a such increasing because theoretically the memory shoul be released after each function call. In the sequential case, the results are somewhat curious. When the `Operator` is used, the memory is almost constant over time, but when an `AcousticWaveSolver` instance is created and the class method `forward` is called repeatedly, the level of memory increases significantly. Since the memory comsumption was not approximately the same in both cases, it is possible that the `AcousticWaveSolver` class is not working as expected.
