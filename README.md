@@ -84,8 +84,8 @@ In each case, check the `shotfile_path` folder to see the generated segy files. 
 
 | | |
 |:-------------------------:|:-------------------------:|
-|<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_1.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_2.png">|
-|<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_3.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/fwi-lsqrtm-python/blob/memory_leak_example/Figure_4.png">|
+|<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/2d_forward_memory_profiling/blob/main/figs/Figure_1.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/2d_forward_memory_profiling/blob/main/figs/Figure_2.png">|
+|<img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/2d_forward_memory_profiling/blob/main/figs/Figure_3.png">|  <img width="1604" alt="screen shot 2017-08-07 at 12 18 15 pm" src="https://github.com/ofmla/2d_forward_memory_profiling/blob/main/figs/Figure_4.png">|
 
 In the parallel case is possible to see a remarkable increase in the memory for both cases, when `Operator` as `AcousticWaveSolver` class are used. Although, each dask task (dedicated to the modeling of one shot) creates its own `Operator` or `solver` according to the case, I did not expect for a such increasing because theoretically the memory should be released after each function call. 
 
