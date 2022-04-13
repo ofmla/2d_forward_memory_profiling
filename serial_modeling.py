@@ -114,17 +114,14 @@ def main():
         u.data.size * itemsize, humanbytes(u.data.size * itemsize)))
 
     for i in range(nshots):
+
+        u.data[:] = 0.
+        src.coordinates.data[:] = src_coord[i, :]
+        src_xyz = src.coordinates.data[:]
+        dobs.coordinates.data[:] = rec_coord[:]
         if use_solver:
-            u.data[:] = 0.
-            geom.src_positions[:] = src_coord[i, :]
-            src_xyz = geom.src_positions[:]
-            geom.rec_positions[:] = rec_coord[:]
             solver.forward(src=src, rec=dobs, u=u, autotune=autotune)
         else:
-            u.data[:] = 0.
-            src.coordinates.data[:] = src_coord[i, :]
-            src_xyz = src.coordinates.data[:]
-            dobs.coordinates.data[:] = rec_coord[:]
             op(time=time_range.num-1, dt=model.critical_dt, autotune=autotune)
 
         print('Shot with time interval of {} ms'.format(model.critical_dt))
