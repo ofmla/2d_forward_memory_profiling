@@ -116,7 +116,7 @@ class DaskCluster:
                 all_shot_results.extend(self.client.gather(shot_futures))
                 batch = []
                 print('Completed shots till {0:3d}'.format(index))
-                index = index + 1
+            index = index + 1
         if batch:
             shot_futures = self.client.map(func,
                                            batch, solver_params=par,
